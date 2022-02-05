@@ -47,7 +47,7 @@ async def shenyuant(bot: HoshinoBot, ev: typing.CQEvent):
     await bot.send(ev, msg)
 
 @sv.scheduled_job("cron",day_of_week="2,6",hour=20)
-async def abyss_settle(bot:HoshinoBot,ev:typing.CQEvent):
+async def abyss_settle():
     abyss = Abyss()
     msg = f"今晚深渊结算\n{MessageSegment.image(abyss.image)}"
-    await bot.send(ev,msg)
+    sv.broadcast(msgs=msg)
