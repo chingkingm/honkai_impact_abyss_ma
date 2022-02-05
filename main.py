@@ -1,13 +1,12 @@
-import sys, os, json, base64
-import PIL
-import rich
+import base64
+import json
+import os
 from datetime import *
-from loguru import logger
-from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
-# sys.path.append(r'G:\GenshinTools\HoshinoBot')
-# from hoshino import aiorequests
+from loguru import logger
+from PIL import Image, ImageDraw, ImageFont
+
 
 URL_3rdguide = "https://www.3rdguide.com/web/teamnew/index"
 URL_nga = "https://bbs.nga.cn/thread.php?fid=549"
@@ -16,19 +15,45 @@ URL_nga = "https://bbs.nga.cn/thread.php?fid=549"
 class HIAM(object):
     """HIAM"""
 
+    @staticmethod
+    def __savedb__():
+        pass
+
+    @staticmethod
+    def __refresh__():
+        exist = Abyss.__load__()
+        temp = exist
+        for item in list(temp):
+            if datetime.fromtimestamp(float(exist[item]["endtime"])) < datetime.now():
+                del exist[item]
+        if exist is None:
+            exist = {}
+        HIAM.__dump__(exist)
+
     def __init__(self) -> None:
         super().__init__()
+        self.__refresh__()
 
-    def get(self) -> dict:
-        with open(
-            os.path.join(os.path.dirname(__file__), "HIAM.json"), "r", encoding="utf8"
-        ) as f:
+    @staticmethod
+    def __load__() -> dict:
+        hiampath = os.path.join(os.path.dirname(__file__), "HIAM.json")
+        if not os.path.exists(hiampath):
+            with open(hiampath, "w", encoding="utf8") as f:
+                json.dump({}, f)
+        with open(hiampath, "r", encoding="utf8") as f:
             try:
                 data = json.load(f)
             except KeyError:
                 data = {}
             f.close()
         return data
+
+    @staticmethod
+    def __dump__(data):
+        with open(
+            os.path.join(os.path.dirname(__file__), "HIAM.json"), "w", encoding="utf8"
+        ) as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
 
     def get_data(self, type):
         DIRPATH = os.path.dirname(__file__)
@@ -57,15 +82,32 @@ class HIAM(object):
 
 
 class Abyss(HIAM):
-    def __init__(self):
+    def __init__(self, weather: str = None, boss: str = None):
         """Abyss"""
         super().__init__()
         self.info = dict(self.get_data("abyss"))
-        try:
-            data = self.get()["abyss"]
-        except KeyError:
-            data = {}
-        if data == {}:
+
+        if (weather and boss) is None:
+            try:
+                data = self.__load__()["abyss"]
+            except KeyError:
+                data = {}
+            if data == {}:
+                raise KeyError(f"目前没有深渊数据")
+            else:
+                self.weather = data["weather"]
+                self.boss = data["boss"]
+                self.env = self.info[self.weather]["环境"]
+                self.eff = self.info[self.weather]["效果"]
+                self.endtime = datetime.fromtimestamp(data["endtime"])
+                self.begintime = self.endtime + timedelta(days=-2)
+
+                self.remain = (
+                    str(self.endtime - datetime.today())[0:-4]
+                    .replace("days", "天")
+                    .replace("day", "天")
+                )
+        else:
             today = datetime.today()
             tw = today.isoweekday()
             tw = tw - 4 if tw > 4 else tw
@@ -75,32 +117,24 @@ class Abyss(HIAM):
                 endtime = datetime(
                     today.year, today.month, today.day + (3 - tw), 22, 30, 0
                 )
+                self.begintime = endtime + timedelta(days=-2)
                 self.endtime = endtime
-                self._remain = str(self.endtime - datetime.today())[0:-4].replace(
-                    "days", "天"
+                self.remain = (
+                    str(self.endtime - datetime.today())[0:-4]
+                    .replace("days", "天")
+                    .replace("day", "天")
                 )
-        else:
-            self._weather = data["weather"]
-            self._boss = data["boss"]
-            self.env = self.info[self._weather]["环境"]
-            self.eff = self.info[self._weather]["效果"]
-            self.endtime = datetime.fromtimestamp(data["endtime"])
-            self._remain = str(self.endtime - datetime.today())[0:-4].replace(
-                "days", "天"
-            )
-
-    @property
-    def remain(self):
-        self._remain = str(self.endtime - datetime.today())[0:-4].replace("days", "天")
-        return self._remain
+                self.__setweather__(weather)
+                self.__setboss__(boss)
+                self.save()
+                self.__clear__()
 
     def save(self):
-        """ """
-        data = self.get()
+        data = self.__load__()
         tosave = {
             "abyss": {
-                "weather": self._weather,
-                "boss": self._boss,
+                "weather": self.weather,
+                "boss": self.boss,
                 "endtime": self.endtime.timestamp(),
             }
         }
@@ -111,83 +145,126 @@ class Abyss(HIAM):
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.close()
 
-    @property
-    def weather(self):
-        return self._weather
-
-    @weather.setter
-    def weather(self, _weather):
+    def __setweather__(self, _weather):
         for w in self.info:
             if _weather == w or _weather == self.info[w]["环境"]:
-                self._weather = w
+                self.weather = w
                 self.env = self.info[w]["环境"]
                 self.eff = self.info[w]["效果"]
                 self.list = self.info[w]["Boss"]
                 return
         raise KeyError(f"不存在{_weather}天气的数据")
 
-    @property
-    def boss(self):
-        return self._boss
-
-    @boss.setter
-    def boss(self, boss_name):
+    def __setboss__(self, boss_name):
         t_name = self.trans_alias(boss_name)
         if t_name in self.list:
-            self._boss = t_name
+            self.boss = t_name
         else:
-            raise KeyError(f"{boss_name}不在{self._weather}包含的boss{self.list}内")
+            raise KeyError(f"{boss_name}不在{self.weather}包含的boss{self.list}内")
 
+    def __clear__(self):
+        ims = os.listdir(os.path.join(os.path.dirname(__file__), "image/saved"))
+        for im in ims:
+            os.remove(os.path.join(os.path.dirname(__file__), f"image/saved/{im}"))
 
-    def gen_image(self)->str:
-        """返回base64图片"""
-        if not (self.weather and self.boss):
-            return
+    @property
+    def image(self):
+        """以结束时间命名图片"""
+        now = datetime.now()
+        ims = os.listdir(os.path.join(os.path.dirname(__file__), "image/saved"))
+        ims.sort(reverse=True)
+        if ims:
+            im = ims[0]
+            im_name = im.split(".")[0]
+            im_time = datetime.fromtimestamp(float(im_name))
+            if im_time > now:
+                return self.gen_image(
+                    os.path.join(
+                        os.path.dirname(__file__), f"image/saved/{im_name}.png"
+                    )
+                )
+        return self.gen_image()
 
-        font_path = r"G:\GenshinTools\HoshinoBot\res\font\NotoSansSC-Bold.otf"
-        font_path1 = r"G:\GenshinTools\HoshinoBot\res\font\FZXiJinLJW.TTF"
-        blank_image = Image.open(
-            os.path.join(os.path.dirname(__file__), r"image/bg.png")
-        )
-        img_draw = ImageDraw.Draw(blank_image)
-        fnt = ImageFont.truetype(font_path1, 40)
-        fnt_s = ImageFont.truetype(font_path, 28)
-        fnt_xs = ImageFont.truetype(font_path, 20)
-        img_draw.text(xy=(10, 20), font=fnt, text=f"{self.weather}", fill=(232, 169, 0))
+    @staticmethod
+    def font(size, wenhei: bool = True):
+        if wenhei:
+            fontpath = os.path.join(os.path.dirname(__file__), "font/HYWenHei-65W.ttf")
+        else:
+            fontpath = os.path.join(os.path.dirname(__file__), "font/HYLingXinTiJ.ttf")
+        return ImageFont.truetype(fontpath, size)
 
-        img_draw.text(
-            xy=(195, 200), font=fnt_s, text=f"{self.env}环境", fill=(255, 255, 255)
+    def gen_image(self, im: str = None) -> str:
+        """返回图片路径"""
+        if not im:
+            bg = Image.open(
+                os.path.join(os.path.dirname(__file__), "image/bg.png")
+            ).convert("RGBA")
+            dr = ImageDraw.Draw(bg)
+            dr.text(
+                xy=(445, 54),
+                text=f"{self.begintime.month}.{self.begintime.day}-{self.endtime.month}.{self.endtime.day}",
+                fill="white",
+                font=self.font(wenhei=False, size=36),
+                anchor="mm",
+            )
+            dr.text(
+                xy=(445, 125),
+                text=f"{self.weather}-{self.env}环境",
+                fill="white",
+                font=self.font(size=30),
+                anchor="mm",
+            )
+            effect = f"{self.eff}".split(",")
+            for n, eff in enumerate(effect):
+                dr.text(
+                    xy=(445, 176 + n * 30),
+                    text=eff,
+                    fill="gray",
+                    font=self.font(24),
+                    anchor="mm",
+                )
+            dr.text(
+                xy=(445, 526),
+                text=f"{self.boss}",
+                fill="red",
+                font=self.font(30),
+                anchor="mm",
+            )
+            boss_img = (
+                Image.open(
+                    os.path.join(os.path.dirname(__file__), f"image/{self.boss}.png")
+                )
+                .convert("RGBA")
+                .resize(size=(551, 220))
+            )
+            bg.alpha_composite(boss_img, dest=(176, 274))
+            im_path = os.path.join(
+                os.path.dirname(__file__),
+                f"image/saved/{int(self.endtime.timestamp())}.png",
+            )
+            bg.save(im_path, format="png")
+        else:
+            bg = Image.open(im).convert("RGBA")
+            dr = ImageDraw.Draw(bg)
+        dr.text(
+            xy=(445, 601),
+            text=f"{self.remain}",
+            fill="white",
+            font=self.font(30),
+            anchor="lm",
         )
-        img_draw.text(
-            xy=(195, 250), font=fnt_xs, text=f"{self.eff}", fill=(192, 192, 192)
-        )
-        img_draw.text(
-            xy=(155, 300), font=fnt_s, text=f"主要敌人：{self._boss}", fill=(255, 255, 255)
-        )
-        img_draw.text(
-            xy=(155, 480),
-            font=fnt_s,
-            text=f"距离结算还有：{self.remain}",
-            fill=(255, 255, 255),
-        )
-        boss_img = Image.open(
-            os.path.join(os.path.dirname(__file__), f"image/{self.boss}.png")
-        ).convert("RGBA")
-        r, g, b, a = boss_img.split()
-        blank_image.paste(boss_img, (160, 350), mask=a)
-        """以下pic2b64来自egenshin"""
+        # bg.show()
         bio = BytesIO()
-        data = blank_image.convert("RGB")
-        data.save(bio, format="JPEG", quality=80)
+        bg.save(bio, format="png", quality=100)
         base64_str = base64.b64encode(bio.getvalue()).decode()
+        bg.close()
         return "base64://" + base64_str
-        blank_image.show()
 
 
 if __name__ == "__main__":
-    aby = Abyss()
+    aby = Abyss(weather="虚数", boss="千律")
     # aby.weather = "点燃"
     # aby.boss = "丽塔"
     # aby.save()
     logger.debug(aby.endtime)
-    aby.gen_image()
+    aby.image
